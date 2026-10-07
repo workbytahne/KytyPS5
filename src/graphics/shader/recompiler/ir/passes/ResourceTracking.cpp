@@ -1050,9 +1050,8 @@ private:
 		const auto* test = condition.Resolve().TryInstruction();
 		if (test == nullptr) return false;
 		const auto known = [&](Value candidate) {
-			return std::ranges::any_of(facts, [&](const Value& fact) {
-				return EquivalentValue(m_program, fact, candidate);
-			});
+			return std::ranges::any_of(facts,
+			                           [&](const Value& fact) { return Implies(fact, candidate); });
 		};
 		if (test->GetOpcode() == ValueOpcode::LogicalNot && test->NumArgs() == 1u) {
 			return ConditionProvesNonzero(test->Arg(0), !positive, value, facts, depth + 1u);
@@ -1090,18 +1089,23 @@ private:
 	}
 
 	// True when the edge previous -> block is taken only if value != 0.
-	bool EdgeProvesNonzero(Value value, const Block* previous, const Block* block) const {
-		// The proven atoms compare scalar values, so the lane quantifier does not matter:
-		// any lane satisfying (uniform && x) satisfies the uniform term.
+	bool EdgeProvesNonzero(Value value, const Block* previous, const Block* block,
+	                       Value lanes = {}) const {
+		// Only an edge that constrains every lane is a guard; `lanes` then names the lanes
+		// whose results matter (see ObservedLanes).
 		const auto edge = ConditionalEdge(previous, block);
-		if (!edge) return false;
-		return ConditionProvesNonzero(edge->condition, edge->positive, value);
+		if (!edge || edge->lanes != LaneQuantifier::All) return false;
+		return ConditionProvesNonzero(edge->condition, edge->positive, value,
+		                              lanes.IsEmpty() ? std::vector<Value> {}
+		                                              : std::vector {lanes});
 	}
 
 	// Every path into block must cross a guard edge; a back edge (block in progress) fails,
 	// since an unrelated comparison is not a bound on FindILsb's zero-input sentinel.
+	// `lanes`, when set, restricts the claim to lanes where it is true (see ObservedLanes).
 	bool NonzeroOnEntry(Value value, const Block* block,
-	                    std::unordered_map<const Block*, bool>* memo = nullptr) const {
+	                    std::unordered_map<const Block*, bool>* memo  = nullptr,
+	                    Value                                   lanes = {}) const {
 		if (m_program.blocks.size() != m_program.block_info.size() || block == nullptr) {
 			return false;
 		}
@@ -1114,11 +1118,41 @@ private:
 		const auto& predecessors = block->ImmPredecessors();
 		if (predecessors.empty()) return false;
 		for (const auto* previous: predecessors) {
-			if (EdgeProvesNonzero(value, previous, block)) continue;
-			if (!NonzeroOnEntry(value, previous, memo)) return false;
+			if (EdgeProvesNonzero(value, previous, block, lanes)) continue;
+			if (!NonzeroOnEntry(value, previous, memo, lanes)) return false;
 		}
 		state = true;
 		return true;
+	}
+
+	// The common lane predicate under which every result of the image handle is written
+	// (SelectU32(lanes, component, old)); other lanes never observe the descriptor.
+	static Value ObservedLanes(const Inst& handle) {
+		Value lanes;
+		for (const auto& use: handle.Uses()) {
+			const auto* image = use.user;
+			if ((image->GetOpcode() != ValueOpcode::ImageSampleRaw &&
+			     image->GetOpcode() != ValueOpcode::ImageGatherRaw) ||
+			    use.operand != 0u || image->Uses().empty())
+				return {};
+			for (const auto& component: image->Uses()) {
+				const auto* extract = component.user;
+				if (extract->GetOpcode() != ValueOpcode::CompositeExtractU32x4 ||
+				    extract->Uses().empty())
+					return {};
+				for (const auto& write: extract->Uses()) {
+					const auto* select = write.user;
+					if (select->GetOpcode() != ValueOpcode::SelectU32 || write.operand != 1u)
+						return {};
+					const auto predicate = select->Arg(0).Resolve();
+					if (lanes.IsEmpty())
+						lanes = predicate;
+					else if (lanes != predicate)
+						return {};
+				}
+			}
+		}
+		return lanes;
 	}
 
 	uint32_t WorkgroupAxis(Value key) const {
@@ -1895,9 +1929,13 @@ private:
 			const auto* selector = key.Resolve().TryInstruction();
 			// Image stores cannot modify the scalar descriptor table, so only buffer and
 			// address writes disable the bounded key shapes.
-			const bool bitscan = selector != nullptr && selector->GetOpcode() == ValueOpcode::FindILsb32 &&
+			// The observed lanes may themselves carry the guard (exec = s_cselect_b64 exec, 0).
+			const auto lanes = ObservedLanes(handle);
+			const bool bitscan =
+			    selector != nullptr && selector->GetOpcode() == ValueOpcode::FindILsb32 &&
 			    selector->NumArgs() == 1u && !m_shader_buffer_writes &&
-			    NonzeroOnEntry(selector->Arg(0), handle.Parent());
+			    ((!lanes.IsEmpty() && ConditionProvesNonzero(lanes, true, selector->Arg(0))) ||
+			     NonzeroOnEntry(selector->Arg(0), handle.Parent(), nullptr, lanes));
 			if (bitscan) {
 				indirect.key_count = Value(32u);
 			} else if (!m_shader_buffer_writes) {

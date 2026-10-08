@@ -1,7 +1,7 @@
 # Windows build and test baseline — research track
 
 Status: **Not yet executed or verified locally**  
-Target: Windows x64, source revision `bb98f26433fa9e711c219aac1711fe8ecba5bf3a` (initial `research/baseline` branch point, 2026-10-07)  
+Target: Windows x64; initial `research/baseline` branch point `bb98f26433fa9e711c219aac1711fe8ecba5bf3a`; current upstream-matched `main` baseline `5a8808086a9815b67d4822cd20cf1e8a7a05f002` (2026-10-07)  
 Owner: PS5 Emulator Build project  
 Purpose: obtain a reproducible baseline **before** changing runtime, GPU, shaders, or game compatibility.
 
@@ -10,7 +10,17 @@ Purpose: obtain a reproducible baseline **before** changing runtime, GPU, shader
 - `research/baseline` initially matched `main` at `bb98f26433fa9e711c219aac1711fe8ecba5bf3a`.
 - `.github/workflows/build.yml` defines a Windows 2022 job with `clang-cl`, CMake, Ninja, Qt 6, and glslang. It builds `launcher` and regression targets, runs selected CTest cases, and installs a launchable artifact.
 - The repository's README documents build prerequisites and commands.
-- **No successful Windows build, test, launcher smoke test, or GTA 6 execution was independently verified by this research note.**
+- **The matching upstream commit passed its Windows CI build, 12 selected CTest cases, install, and artifact upload.** This is not a local or fork CI run. Launcher smoke testing and GTA 6 execution remain unverified.
+
+## Verified upstream Windows CI reference (2026-10-07 PDT)
+
+- Source: [official KytyPS5 build run 37703912285](https://github.com/KytyPS5/KytyPS5/actions/runs/37703912285), commit `5a8808086a9815b67d4822cd20cf1e8a7a05f002`.
+- The user's fork `workbytahne/KytyPS5` `main` was checked against upstream `main` and was identical (0 commits ahead, 0 behind) at this revision.
+- Windows job ID `113105654212` concluded **success**. Toolchain verification, CMake configure, build, selected tests, install, and artifact upload all concluded **success**.
+- Windows job log: **12/12 selected CTest cases passed**, **0 failed**; total CTest elapsed time **5.05 seconds**. These are not necessarily all project tests, and no game was run by the CI test step.
+- Official Windows artifact: `KytyPS5-Windows-x64` (artifact ID `11523446639`), available from the linked run at verification time. A successful artifact upload is not a successful laptop smoke test.
+- The user's **fork** had **0 GitHub Actions runs** at this check. Local Windows toolchain, local build, launcher startup, and GTA 6 compatibility remain **not verified**.
+- Do not mark the local acceptance checks below as passed based on upstream CI; their purpose is to collect user-environment evidence.
 
 ## Milestone 1 acceptance criteria
 
